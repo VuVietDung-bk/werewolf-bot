@@ -8,17 +8,14 @@ Bot Discord quản trò Ma Sói theo luồng trong `design.md`.
 - Điều khiển vòng chơi: `/endday`, `/endnight`, `/endgame`
 - Kênh cấu hình: `/setnotifchannel`, `/setgamechannel`
 - Người chơi: `/joingame`, `/leavegame`, `/vote`, `/castskill`
+- Lệnh role riêng theo roles.md: `/passbomb`, `/detectivevote`, `/specialkill`, `/revealshield`
 - Kênh sói: `/chatsoi`, `/readsoi`, `/votesoi`
 - Log game qua DM: `/log`
 
 ## Role đã triển khai
 
-- `bao_ve`
-- `ke_hap_hoi`
-- `tien_tri`
-- `canh_sat_truong`
-- `soi_gian_diep`
-- role nền: `dan_lang`, `soi_thuong`
+- Đã định nghĩa tường minh **toàn bộ role trong `roles.md`** dưới dạng class riêng.
+- Engine gọi trực tiếp lifecycle của role: `onDie`, `onVoted`, `onSkill`, `onNightStart`, `onDayStart`.
 
 ## Cài đặt
 
@@ -41,4 +38,4 @@ python3 main.py
 
 - Game bắt đầu ở **ngày 0**.
 - Chỉ host mới có quyền đóng/mở phase.
-- `castskill` hiện xử lý theo role ban đêm.
+- `castskill` hỗ trợ `skill_name` và nhiều mục tiêu (tùy skill của từng role).

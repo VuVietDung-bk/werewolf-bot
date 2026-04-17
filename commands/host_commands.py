@@ -192,7 +192,11 @@ class HostCommands(commands.Cog):
             await interaction.response.send_message(f"❌ {result.get('message')}", ephemeral=True)
             return
 
-        await self._send_private_messages(self.bot, {k: [v] for k, v in result["spy_messages"].items()})
+        day_private: dict[int, list[str]] = {k: [v] for k, v in result["spy_messages"].items()}
+        for uid, lines in result.get("villager_messages", {}).items():
+            day_private.setdefault(uid, []).extend(lines)
+        if day_private:
+            await self._send_private_messages(self.bot, day_private)
         winner = result.get("winner")
         if winner:
             await interaction.response.send_message(f"🏁 Game kết thúc. Phe thắng: **{winner}**")

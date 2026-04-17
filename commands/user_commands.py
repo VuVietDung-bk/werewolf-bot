@@ -41,30 +41,65 @@ class UserCommands(commands.Cog):
         }[role_def.side]
         return f"**Phe:** {side_name}\n{role_def.description}"
 
+    @staticmethod
+    def _parse_role_input(raw_role: str) -> Optional[RoleType]:
+        normalized = raw_role.strip().lower()
+        if not normalized:
+            return None
+
+        compact = normalized.replace("-", "_").replace(" ", "_")
+        candidates = [normalized, compact]
+
+        if compact.startswith("roletype."):
+            candidates.append(compact.split(".", 1)[1])
+        if normalized.startswith("roletype."):
+            candidates.append(normalized.split(".", 1)[1].replace("-", "_").replace(" ", "_"))
+
+        for candidate in candidates:
+            try:
+                return RoleType(candidate)
+            except ValueError:
+                pass
+            for role_type in RoleType:
+                if role_type.name.lower() == candidate:
+                    return role_type
+        return None
+
     @app_commands.command(name="help", description="Hiển thị hướng dẫn")
-    @app_commands.describe(role="Xem mô tả role cụ thể")
-    async def help_command(self, interaction: discord.Interaction, role: Optional[str] = None):
+    @app_commands.describe(role="Xem mô tả role cụ thể", dms="Gửi hướng dẫn qua DM thay vì hiện ở kênh")
+    async def help_command(
+        self,
+        interaction: discord.Interaction,
+        role: Optional[str] = None,
+        dms: bool = False,
+    ):
         game = self._current_game()
-        role_defs = WerewolfGame.ROLE_DEFINITIONS
+        role_defs = WerewolfGame._load_role_definitions()
 
         if role:
-            role_key = role.strip().lower()
-            role_obj = None
-            for role_type in RoleType:
-                if role_type.value == role_key:
-                    role_obj = role_type
-                    break
+            role_obj = self._parse_role_input(role)
             if role_obj is None:
                 await interaction.response.send_message("❌ Role không hợp lệ.", ephemeral=True)
                 return
 
-            role_def = role_defs[role_obj]
+            role_def = role_defs.get(role_obj)
+            if role_def is None:
+                await interaction.response.send_message("❌ Chưa tải được dữ liệu role.", ephemeral=True)
+                return
             embed = discord.Embed(
                 title=f"📘 {role_obj.value}",
                 description=self._build_role_help(role_def),
                 color=discord.Color.blue(),
             )
-            await interaction.response.send_message(embed=embed)
+            if dms:
+                try:
+                    dm = await interaction.user.create_dm()
+                    await dm.send(embed=embed)
+                    await interaction.response.send_message("📩 Đã gửi hướng dẫn role qua DM.", ephemeral=True)
+                except discord.Forbidden:
+                    await interaction.response.send_message("❌ Không thể gửi DM. Hãy mở DM với bot.", ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed)
             return
 
         phase_text = game.phase.value if game else "chưa có game"
@@ -85,16 +120,25 @@ class UserCommands(commands.Cog):
             name="Lệnh Người chơi",
             value=(
                 "`/joingame`, `/leavegame`, `/roles`, `/vote`, `/castskill`, "
-                "`/chatsoi`, `/readsoi`, `/votesoi`"
+                "`/chatsoi`, `/readsoi`, `/votesoi`, `/passbomb`, `/detectivevote`, "
+                "`/specialkill`, `/revealshield`, `/transfercoins`, `/daychat`"
             ),
             inline=False,
         )
-        await interaction.response.send_message(embed=embed)
+        if dms:
+            try:
+                dm = await interaction.user.create_dm()
+                await dm.send(embed=embed)
+                await interaction.response.send_message("📩 Đã gửi hướng dẫn tổng quan qua DM.", ephemeral=True)
+            except discord.Forbidden:
+                await interaction.response.send_message("❌ Không thể gửi DM. Hãy mở DM với bot.", ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="roles", description="Danh sách role hiện tại")
     @app_commands.describe(page="Trang (mỗi trang 6 role)")
     async def roles(self, interaction: discord.Interaction, page: int = 1):
-        roles = list(WerewolfGame.ROLE_DEFINITIONS.values())
+        roles = list(WerewolfGame._load_role_definitions().values())
         order = {Side.DAN: 0, Side.SOI: 1, Side.TRUNG_LAP: 2}
         roles.sort(key=lambda r: (order[r.side], r.role.value))
 
@@ -183,14 +227,33 @@ class UserCommands(commands.Cog):
         await interaction.response.send_message(f"🗳️ Đã vote: **{vote_label}**")
 
     @app_commands.command(name="castskill", description="Dùng kỹ năng role")
-    @app_commands.describe(target="Mục tiêu của kỹ năng")
-    async def cast_skill(self, interaction: discord.Interaction, target: discord.Member):
+    @app_commands.describe(
+        target="Mục tiêu 1 (nếu skill cần)",
+        target2="Mục tiêu 2 (nếu skill cần)",
+        target3="Mục tiêu 3 (nếu skill cần)",
+        skill_name="Tên skill cụ thể (nếu role có nhiều skill)",
+    )
+    async def cast_skill(
+        self,
+        interaction: discord.Interaction,
+        target: Optional[discord.Member] = None,
+        target2: Optional[discord.Member] = None,
+        target3: Optional[discord.Member] = None,
+        skill_name: Optional[str] = None,
+    ):
         game = self._current_game()
         if not game:
             await interaction.response.send_message("❌ Không có game Ma Sói nào đang diễn ra.", ephemeral=True)
             return
 
-        ok, message, private_lines = game.cast_skill(interaction.user.id, [target.id])
+        targets = []
+        if target:
+            targets.append(target.id)
+        if target2:
+            targets.append(target2.id)
+        if target3:
+            targets.append(target3.id)
+        ok, message, private_lines = game.cast_skill(interaction.user.id, targets, skill_name=skill_name)
         if not ok:
             await interaction.response.send_message(f"❌ {message}", ephemeral=True)
             return
@@ -251,7 +314,94 @@ class UserCommands(commands.Cog):
 
         await interaction.response.send_message(f"✅ Đã vote sói: {target.mention}", ephemeral=True)
 
+    @app_commands.command(name="passbomb", description="(Người Cầm Bom) Trao bom cho người khác")
+    async def pass_bomb(self, interaction: discord.Interaction, target: discord.Member):
+        game = self._current_game()
+        if not game:
+            await interaction.response.send_message("❌ Không có game Ma Sói nào đang diễn ra.", ephemeral=True)
+            return
+        ok, message = game.pass_bomb(interaction.user.id, target.id)
+        if not ok:
+            await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+            return
+        await interaction.response.send_message(f"💣 {message}", ephemeral=True)
+
+    @app_commands.command(name="detectivevote", description="(Thám tử tư) Dùng xu để cộng thêm phiếu")
+    async def detective_vote(self, interaction: discord.Interaction, target: discord.Member):
+        game = self._current_game()
+        if not game:
+            await interaction.response.send_message("❌ Không có game Ma Sói nào đang diễn ra.", ephemeral=True)
+            return
+        ok, message = game.detective_coin_vote(interaction.user.id, target.id)
+        if not ok:
+            await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🪙 {message}", ephemeral=True)
+
+    @app_commands.command(
+        name="specialkill",
+        description="(Kẻ Phóng Hỏa/Kẻ Đánh Bạc/Kẻ Nối Hồn) Lệnh giết dùng chung",
+    )
+    async def special_kill(self, interaction: discord.Interaction, target: discord.Member):
+        game = self._current_game()
+        if not game:
+            await interaction.response.send_message("❌ Không có game Ma Sói nào đang diễn ra.", ephemeral=True)
+            return
+        ok, message = game.special_role_kill(interaction.user.id, target.id)
+        if not ok:
+            await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🗡️ {message}", ephemeral=True)
+
+    @app_commands.command(name="revealshield", description="(Sói Có Khiên) Công khai khiên để miễn nhiễm vote")
+    async def reveal_shield(self, interaction: discord.Interaction):
+        game = self._current_game()
+        if not game:
+            await interaction.response.send_message("❌ Không có game Ma Sói nào đang diễn ra.", ephemeral=True)
+            return
+        ok, message = game.reveal_wolf_shield(interaction.user.id)
+        if not ok:
+            await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🛡️ {message}", ephemeral=True)
+
+    @app_commands.command(name="transfercoins", description="(Role có xu) Chuyển xu cho người chơi khác")
+    @app_commands.describe(target="Người nhận xu", amount="Số xu muốn chuyển")
+    async def transfer_coins(self, interaction: discord.Interaction, target: discord.Member, amount: int):
+        game = self._current_game()
+        if not game:
+            await interaction.response.send_message("❌ Không có game Ma Sói nào đang diễn ra.", ephemeral=True)
+            return
+        ok, message = game.transfer_coins(interaction.user.id, target.id, amount)
+        if not ok:
+            await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🪙 {message}", ephemeral=True)
+
+    @app_commands.command(name="daychat", description="Chat công khai ban ngày (ghi nhận cho role liên quan)")
+    @app_commands.describe(message="Nội dung chat")
+    async def day_chat(self, interaction: discord.Interaction, message: str):
+        if not _in_game_channel(self.bot, interaction):
+            await interaction.response.send_message("❌ Lệnh này chỉ được dùng trong game channel.", ephemeral=True)
+            return
+        game = self._current_game()
+        if not game:
+            await interaction.response.send_message("❌ Không có game Ma Sói nào đang diễn ra.", ephemeral=True)
+            return
+        if game.phase != WerewolfPhase.DAY:
+            await interaction.response.send_message("❌ Chỉ được chat bằng lệnh này vào ban ngày.", ephemeral=True)
+            return
+        player = game.players.get(interaction.user.id)
+        if not player or not player.is_alive:
+            await interaction.response.send_message("❌ Bạn không thể chat lúc này.", ephemeral=True)
+            return
+        if player.role == RoleType.KE_TAM_LY_YEU:
+            await interaction.response.send_message("❌ Kẻ Tâm Lý Yếu không thể chat ban ngày.", ephemeral=True)
+            return
+
+        game.mark_day_chat(interaction.user.id)
+        await interaction.response.send_message(f"💬 {interaction.user.mention}: {message}")
+
 
 async def setup(bot: MinigameBot):
     await bot.add_cog(UserCommands(bot))
-
